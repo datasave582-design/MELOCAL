@@ -44,7 +44,7 @@
       <input id="adminEmail" type="email" class="form-control mb-2" placeholder="Admin email" onkeyup="if(event.key==='Enter') document.getElementById('adminFirebasePass').focus()">
       <input id="adminFirebasePass" type="password" class="form-control mb-2" placeholder="Firebase password" onkeyup="if(event.key==='Enter') AdminAuth.loginWithFirebase()">
       <button class="btn btn-danger w-100 fw-bold py-2" onclick="AdminAuth.loginWithFirebase()"><i class="bi bi-unlock-fill me-1"></i> लॉगिन करें</button>
-      <div class="small text-secondary mt-2">पहले Firebase Console में Email/Password user बनाकर उसे <code>adminEmails/{uid} = true</code> से authorize करें। सुरक्षा के लिए Admin login सिर्फ Firebase से होता है — कोई साधारण पासवर्ड login नहीं है।</div>
+      <div class="small text-secondary mt-2">पहले Firebase Console में Email/Password user बनाकर उसे <code>admins/{uid} = true</code> से authorize करें। सुरक्षा के लिए Admin login सिर्फ Firebase से होता है — कोई साधारण पासवर्ड login नहीं है।</div>
       <div class="text-center mt-4"><a class="quiet small" href="index.html"><i class="bi bi-arrow-left me-1"></i> Consumer App पर वापस जाएँ</a></div>
     </div>
   </div>
@@ -83,10 +83,14 @@
        FIREBASE (same project as the consumer app — data stays in sync)
        ======================================================================== */
     const firebaseConfig = {
-      apiKey: "AIzaSyAOVmhRrl_bb3qp0UIisvGqtrhC-P2pKtQ",
-      authDomain: "mylocals-56b43.firebaseapp.com",
-      projectId: "mylocals-56b43",
-      databaseURL: "https://mylocals-56b43-default-rtdb.firebaseio.com"
+      apiKey: "AIzaSyBBSsIRGaOswYUxMY6G6udxLM8V_-Tdytk",
+      authDomain: "local-9a38c.firebaseapp.com",
+      databaseURL: "https://local-9a38c-default-rtdb.firebaseio.com",
+      projectId: "local-9a38c",
+      storageBucket: "local-9a38c.firebasestorage.app",
+      messagingSenderId: "251764724922",
+      appId: "1:251764724922:web:7e9823c4e20249b79f1e83",
+      measurementId: "G-VEDV138WYG"
     };
     let db = null, auth = null, isFirebaseReady = false;
     try {
@@ -95,24 +99,6 @@
       auth = firebase.auth();
       isFirebaseReady = true;
     } catch (err) { console.warn("Firebase Offline Mode (admin)"); }
-
-    let __syncWarningShown = false;
-    function notifySyncBlocked() {
-      if (__syncWarningShown) return;
-      __syncWarningShown = true;
-      const bar = document.createElement("div");
-      bar.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:100000;background:#dc3545;color:#fff;padding:10px 14px;font-size:0.8rem;text-align:center;";
-      bar.innerHTML = "⚠️ Firebase Database Rules के कारण data save/sync नहीं हो पा रहा। Firebase Console → Realtime Database → Rules चेक करें। <button style=\"margin-left:8px;background:#fff;color:#dc3545;border:0;border-radius:6px;padding:2px 8px;font-weight:bold;\" onclick=\"this.parentElement.remove()\">बंद करें</button>";
-      document.body.appendChild(bar);
-    }
-    window.addEventListener("unhandledrejection", (e) => {
-      const msg = String(e?.reason?.message || e?.reason || "");
-      if (msg.includes("PERMISSION_DENIED") || msg.includes("permission_denied")) {
-        e.preventDefault();
-        console.warn("Firebase permission denied — check Realtime Database Rules in the Firebase console.");
-        notifySyncBlocked();
-      }
-    });
 
     const State = {
       identity: null, // {mode:'firebase', email, uid}
@@ -126,29 +112,40 @@
        Always write/remove ONE keyed item at a time. */
     function syncPostUpsert(post) {
       localStorage.setItem("app_posts", JSON.stringify(State.posts));
-      if (isFirebaseReady) db.ref("posts/" + post.id).set(post).catch(e => { console.warn("Post sync failed (check Firebase rules):", e.message); notifySyncBlocked(); });
+      if (isFirebaseReady) db.ref("posts/" + post.id).set(post).catch(e => console.warn("Post sync failed (check Firebase rules):", e.message));
     }
     function syncPostDelete(id) {
       localStorage.setItem("app_posts", JSON.stringify(State.posts));
-      if (isFirebaseReady) db.ref("posts/" + id).remove().catch(e => { console.warn("Post delete sync failed:", e.message); notifySyncBlocked(); });
+      if (isFirebaseReady) db.ref("posts/" + id).remove().catch(e => console.warn("Post delete sync failed:", e.message));
     }
     function syncOrderUpdate(order) {
       localStorage.setItem("app_orders", JSON.stringify(State.orders));
-      if (isFirebaseReady) db.ref("orders/" + order.orderId).set(order).catch(e => { console.warn("Order sync failed:", e.message); notifySyncBlocked(); });
+      if (isFirebaseReady) db.ref("orders/" + order.orderId).set(order).catch(e => console.warn("Order sync failed:", e.message));
     }
     function syncOrderDelete(id) {
       localStorage.setItem("app_orders", JSON.stringify(State.orders));
-      if (isFirebaseReady) db.ref("orders/" + id).remove().catch(e => { console.warn("Order delete sync failed:", e.message); notifySyncBlocked(); });
+      if (isFirebaseReady) db.ref("orders/" + id).remove().catch(e => console.warn("Order delete sync failed:", e.message));
     }
-    if (isFirebaseReady) {
-      db.ref("posts").on("value", snap => { State.posts = snap.val() ? Object.values(snap.val()) : []; localStorage.setItem("app_posts", JSON.stringify(State.posts)); if (AdminAuth.isLoggedIn()) AdminPanel.refresh(); }, err => { console.warn("posts sync error:", err.message); notifySyncBlocked(); });
-      db.ref("orders").on("value", snap => { State.orders = snap.val() ? Object.values(snap.val()) : []; localStorage.setItem("app_orders", JSON.stringify(State.orders)); if (AdminAuth.isLoggedIn()) AdminPanel.refresh(); }, err => { console.warn("orders sync error:", err.message); notifySyncBlocked(); });
-      db.ref("adminTickets").on("value", snap => { State.adminTickets = snap.val() ? Object.values(snap.val()) : []; if (AdminAuth.isLoggedIn()) AdminPanel.refresh(); }, err => { console.warn("tickets sync error:", err.message); notifySyncBlocked(); });
+    let adminDataRefs = [];
+    function detachAdminDataListeners() {
+      adminDataRefs.forEach(ref => { try { ref.off(); } catch(e) {} });
+      adminDataRefs = [];
+    }
+    function attachAdminDataListeners() {
+      if (!isFirebaseReady || !auth.currentUser) return;
+      detachAdminDataListeners();
+      const postsRef = db.ref("posts");
+      const ordersRef = db.ref("orders");
+      const ticketsRef = db.ref("adminTickets");
+      postsRef.on("value", snap => { State.posts = snap.val() ? Object.values(snap.val()) : []; localStorage.setItem("app_posts", JSON.stringify(State.posts)); if (AdminAuth.isLoggedIn()) AdminPanel.refresh(); }, err => { if (AdminAuth.isLoggedIn()) console.warn("posts sync error:", err.message); });
+      ordersRef.on("value", snap => { State.orders = snap.val() ? Object.values(snap.val()) : []; localStorage.setItem("app_orders", JSON.stringify(State.orders)); if (AdminAuth.isLoggedIn()) AdminPanel.refresh(); }, err => { if (AdminAuth.isLoggedIn()) console.warn("orders sync error:", err.message); });
+      ticketsRef.on("value", snap => { State.adminTickets = snap.val() ? Object.values(snap.val()) : []; if (AdminAuth.isLoggedIn()) AdminPanel.refresh(); }, err => { if (AdminAuth.isLoggedIn()) console.warn("tickets sync error:", err.message); });
+      adminDataRefs = [postsRef, ordersRef, ticketsRef];
     }
 
     /* ========================================================================
        LOGIN / AUTH — Firebase-only. There is no local password fallback:
-       every admin must be a Firebase user authorized via adminEmails/{uid}=true.
+       every admin must be a Firebase user authorized via admins/{uid}=true.
        ======================================================================== */
     const AdminAuth = {
       isLoggedIn() { return !!State.identity; },
@@ -159,10 +156,12 @@
         if (!email || !pass) return alert("Email और Password दोनों डालें।");
         try {
           const c = await auth.signInWithEmailAndPassword(email, pass);
-          const snap = await db.ref("adminEmails/" + c.user.uid).once("value");
-          if (snap.val() !== true) { await auth.signOut(); return alert("यह Firebase user Super Admin के रूप में authorize नहीं है। Firebase Console में adminEmails/" + c.user.uid + " = true सेट करें।"); }
+          const snap = await db.ref("admins/" + c.user.uid).once("value");
+          if (snap.val() !== true) { await auth.signOut(); return alert("यह Firebase user Super Admin के रूप में authorize नहीं है। Firebase Console में admins/" + c.user.uid + " = true सेट करें।"); }
           State.identity = { mode: "firebase", name: c.user.displayName || email.split("@")[0], email, uid: c.user.uid };
           this.enter();
+          attachAdminDataListeners();
+          watchAdmin(c.user.uid);
         } catch (e) { alert("Firebase login failed: " + (e.message || e)); }
       },
       enter() {
@@ -173,12 +172,70 @@
       },
       logout() {
         if (!confirm("Admin panel से logout करें?")) return;
+        detachAdminDataListeners();
+        if (adminAuthRef) { try { adminAuthRef.off(); } catch(e) {} adminAuthRef = null; }
+        if (adminAuthTimer) { clearInterval(adminAuthTimer); adminAuthTimer = null; }
         if (isFirebaseReady) auth.signOut().catch(() => {});
         State.identity = null;
         document.getElementById("admin-app").style.display = "none";
         document.getElementById("login-screen").style.display = "flex";
       }
     };
+
+    /* ========================================================================
+       ADMIN AUTHORIZATION WATCHER
+       - Firebase Auth must exist
+       - admins/{uid} must remain true
+       - removal logs the admin out immediately
+       ======================================================================== */
+    let adminAuthRef = null;
+    let adminAuthTimer = null;
+    function hideAdmin(reason) {
+      if (adminAuthRef) { try { adminAuthRef.off(); } catch(e) {} adminAuthRef = null; }
+      if (adminAuthTimer) { clearInterval(adminAuthTimer); adminAuthTimer = null; }
+      detachAdminDataListeners();
+      State.identity = null;
+      document.getElementById("admin-app").style.display = "none";
+      document.getElementById("login-screen").style.display = "flex";
+      if (isFirebaseReady && auth.currentUser) auth.signOut().catch(()=>{});
+      if (reason) alert(reason);
+    }
+    function watchAdmin(uid) {
+      if (!isFirebaseReady || !uid) return;
+      if (adminAuthRef) { try { adminAuthRef.off(); } catch(e) {} }
+      if (adminAuthTimer) clearInterval(adminAuthTimer);
+      adminAuthRef = db.ref("admins/" + uid);
+      adminAuthRef.on("value", snap => {
+        if (!State.identity || State.identity.uid !== uid) return;
+        if (snap.val() !== true) hideAdmin("इस Admin account का access हटा दिया गया है।");
+      }, () => {
+        if (State.identity) hideAdmin("Admin authorization verify नहीं हो सका। सुरक्षा के लिए logout किया गया।");
+      });
+      adminAuthTimer = setInterval(async () => {
+        if (!State.identity || !auth.currentUser) { if (State.identity) hideAdmin("Firebase session समाप्त हो गया।"); return; }
+        try {
+          const snap = await db.ref("admins/" + uid).once("value");
+          if (snap.val() !== true) hideAdmin("इस Admin account का access हटा दिया गया है।");
+        } catch(e) {}
+      }, 10000);
+    }
+    if (isFirebaseReady) {
+      auth.onAuthStateChanged(async user => {
+        if (!user) { if (State.identity) hideAdmin("Firebase session समाप्त हो गया।"); return; }
+        try {
+          const snap = await db.ref("admins/" + user.uid).once("value");
+          if (snap.val() !== true) { await auth.signOut(); return; }
+          if (!State.identity) {
+            State.identity = { mode:"firebase", name:user.displayName || (user.email||"").split("@")[0] || "Admin", email:user.email || "", uid:user.uid };
+            AdminAuth.enter();
+            attachAdminDataListeners();
+          } else {
+            attachAdminDataListeners();
+          }
+          watchAdmin(user.uid);
+        } catch(e) { try { await auth.signOut(); } catch(_) {} }
+      });
+    }
 
     /* ========================================================================
        PRODUCT / ADVERTISEMENT / ORDER MANAGEMENT
@@ -263,7 +320,7 @@
           const app = firebase.initializeApp(firebaseConfig, secName), au = app.auth();
           const c = await au.createUserWithEmailAndPassword(email, pass);
           await db.ref("users/" + c.user.uid).set({ uid: c.user.uid, name, email, createdAt: Date.now(), createdBy: "admin", role: makeAdmin ? "superadmin" : "user" });
-          if (makeAdmin) await db.ref("adminEmails/" + c.user.uid).set(true);
+          if (makeAdmin) await db.ref("admins/" + c.user.uid).set(true);
           await au.signOut(); await app.delete();
           alert("✓ User Firebase Authentication में बन गया।\nEmail: " + email);
           document.getElementById("newUserName").value = ""; document.getElementById("newUserEmail").value = ""; document.getElementById("newUserPass").value = "";
