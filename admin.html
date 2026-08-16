@@ -1,4 +1,3 @@
-
 <html lang="hi" data-bs-theme="dark">
 <head>
   <meta charset="UTF-8">
@@ -44,7 +43,7 @@
       <input id="adminEmail" type="email" class="form-control mb-2" placeholder="Admin email" onkeyup="if(event.key==='Enter') document.getElementById('adminFirebasePass').focus()">
       <input id="adminFirebasePass" type="password" class="form-control mb-2" placeholder="Firebase password" onkeyup="if(event.key==='Enter') AdminAuth.loginWithFirebase()">
       <button class="btn btn-danger w-100 fw-bold py-2" onclick="AdminAuth.loginWithFirebase()"><i class="bi bi-unlock-fill me-1"></i> लॉगिन करें</button>
-      <div class="small text-secondary mt-2">पहले Firebase Console में Email/Password user बनाकर उसे <code>adminEmails/{uid} = true</code> से authorize करें। सुरक्षा के लिए Admin login सिर्फ Firebase से होता है — कोई साधारण पासवर्ड login नहीं है।</div>
+      <div class="small text-secondary mt-2">पहले Firebase Console में Email/Password user बनाकर उसे <code>admins/{uid} = true</code> से authorize करें। सुरक्षा के लिए Admin login सिर्फ Firebase से होता है — कोई साधारण पासवर्ड login नहीं है।</div>
       <div class="text-center mt-4"><a class="quiet small" href="index.html"><i class="bi bi-arrow-left me-1"></i> Consumer App पर वापस जाएँ</a></div>
     </div>
   </div>
@@ -83,10 +82,14 @@
        FIREBASE (same project as the consumer app — data stays in sync)
        ======================================================================== */
     const firebaseConfig = {
-      apiKey: "AIzaSyAOVmhRrl_bb3qp0UIisvGqtrhC-P2pKtQ",
-      authDomain: "mylocals-56b43.firebaseapp.com",
-      projectId: "mylocals-56b43",
-      databaseURL: "https://mylocals-56b43-default-rtdb.firebaseio.com"
+      apiKey: "AIzaSyBBSsIRGaOswYUxMY6G6udxLM8V_-Tdytk",
+      authDomain: "local-9a38c.firebaseapp.com",
+      databaseURL: "https://local-9a38c-default-rtdb.firebaseio.com",
+      projectId: "local-9a38c",
+      storageBucket: "local-9a38c.firebasestorage.app",
+      messagingSenderId: "251764724922",
+      appId: "1:251764724922:web:7e9823c4e20249b79f1e83",
+      measurementId: "G-VEDV138WYG"
     };
     let db = null, auth = null, isFirebaseReady = false;
     try {
@@ -130,7 +133,7 @@
 
     /* ========================================================================
        LOGIN / AUTH — Firebase-only. There is no local password fallback:
-       every admin must be a Firebase user authorized via adminEmails/{uid}=true.
+       every admin must be a Firebase user authorized via admins/{uid}=true.
        ======================================================================== */
     const AdminAuth = {
       isLoggedIn() { return !!State.identity; },
@@ -141,8 +144,8 @@
         if (!email || !pass) return alert("Email और Password दोनों डालें।");
         try {
           const c = await auth.signInWithEmailAndPassword(email, pass);
-          const snap = await db.ref("adminEmails/" + c.user.uid).once("value");
-          if (snap.val() !== true) { await auth.signOut(); return alert("यह Firebase user Super Admin के रूप में authorize नहीं है। Firebase Console में adminEmails/" + c.user.uid + " = true सेट करें।"); }
+          const snap = await db.ref("admins/" + c.user.uid).once("value");
+          if (snap.val() !== true) { await auth.signOut(); return alert("यह Firebase user Super Admin के रूप में authorize नहीं है। Firebase Console में admins/" + c.user.uid + " = true सेट करें।"); }
           State.identity = { mode: "firebase", name: c.user.displayName || email.split("@")[0], email, uid: c.user.uid };
           this.enter();
         } catch (e) { alert("Firebase login failed: " + (e.message || e)); }
@@ -245,7 +248,7 @@
           const app = firebase.initializeApp(firebaseConfig, secName), au = app.auth();
           const c = await au.createUserWithEmailAndPassword(email, pass);
           await db.ref("users/" + c.user.uid).set({ uid: c.user.uid, name, email, createdAt: Date.now(), createdBy: "admin", role: makeAdmin ? "superadmin" : "user" });
-          if (makeAdmin) await db.ref("adminEmails/" + c.user.uid).set(true);
+          if (makeAdmin) await db.ref("admins/" + c.user.uid).set(true);
           await au.signOut(); await app.delete();
           alert("✓ User Firebase Authentication में बन गया।\nEmail: " + email);
           document.getElementById("newUserName").value = ""; document.getElementById("newUserEmail").value = ""; document.getElementById("newUserPass").value = "";
