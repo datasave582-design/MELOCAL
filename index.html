@@ -430,10 +430,14 @@
        1. FIREBASE & STATE ENGINE
        ======================================================================== */
     const firebaseConfig = {
-      apiKey: "AIzaSyAOVmhRrl_bb3qp0UIisvGqtrhC-P2pKtQ",
-      authDomain: "mylocals-56b43.firebaseapp.com",
-      projectId: "mylocals-56b43",
-      databaseURL: "https://mylocals-56b43-default-rtdb.firebaseio.com"
+      apiKey: "AIzaSyBBSsIRGaOswYUxMY6G6udxLM8V_-Tdytk",
+      authDomain: "local-9a38c.firebaseapp.com",
+      databaseURL: "https://local-9a38c-default-rtdb.firebaseio.com",
+      projectId: "local-9a38c",
+      storageBucket: "local-9a38c.firebasestorage.app",
+      messagingSenderId: "251764724922",
+      appId: "1:251764724922:web:7e9823c4e20249b79f1e83",
+      measurementId: "G-VEDV138WYG"
     };
     let db = null, auth = null, isFirebaseReady = false;
     try {
@@ -462,72 +466,17 @@
       weeklyForecast: null,
       hourlyForecast: null,
       activeRoomCode: null,
-      chatUnsubscribe: null,
-      chatLoading: false,
       orders: JSON.parse(localStorage.getItem("app_orders")) || [],
       posts: JSON.parse(localStorage.getItem("app_posts")) || [
         { id: "p101", type: "market_sell", title: "Honda Activa 6G", price: 52000, desc: "बेहतरीन स्थिति, संपर्क करें।", author: "MyLocal Admin", avatar: "https://picsum.photos/101", img: "https://picsum.photos/400/250?random=11", status: "APPROVED", isAdminPost: true, time: new Date().toLocaleDateString(), likes: 5 }
       ],
       chatMessages: JSON.parse(localStorage.getItem("app_chat")) || [],
-      engagements: JSON.parse(localStorage.getItem("app_engagements")) || {},
       khataEntries: JSON.parse(localStorage.getItem("app_khata")) || [],
       adminTickets: JSON.parse(localStorage.getItem("app_admin_tickets")) || []
     };
     function getUser() {
       if (!State.user) State.user = { uid: "guest_" + Date.now(), name: "गेस्ट यूज़र", phone: "", avatar: "https://picsum.photos/100", isGuest: true };
       return State.user;
-    }
-
-    function requireFirebaseUser() {
-      if (!isFirebaseReady || !auth.currentUser || !State.user || State.user.isGuest) {
-        alert("Private Chat के लिए पहले Google से Login करें। Guest mode में Firebase private chat उपलब्ध नहीं है।");
-        AuthEngine.openAuthModal();
-        return null;
-      }
-      return auth.currentUser;
-    }
-
-    function chatPath(room) {
-      return "chatRooms/" + encodeURIComponent(room).replace(/%/g, "_");
-    }
-
-    function stopChatListener() {
-      if (typeof State.chatUnsubscribe === "function") { State.chatUnsubscribe(); }
-      State.chatUnsubscribe = null;
-    }
-
-    function startChatListener(room) {
-      stopChatListener();
-      State.chatMessages = [];
-      if (!room || !isFirebaseReady || !auth.currentUser || State.user?.isGuest) {
-        localStorage.setItem("app_chat", JSON.stringify(State.chatMessages));
-        return;
-      }
-      const ref = db.ref(chatPath(room) + "/messages");
-      const handler = snap => {
-        const val = snap.val() || {};
-        State.chatMessages = Object.entries(val).map(([id, m]) => ({ ...m, id })).sort((a,b) => Number(a.createdAt || 0) - Number(b.createdAt || 0));
-        localStorage.setItem("app_chat", JSON.stringify(State.chatMessages));
-        if (App.currentTab === "chat") App.refresh();
-      };
-      const error = err => {
-        console.warn("Chat read error:", err.message);
-        State.chatLoading = false;
-        if (App.currentTab === "chat") App.refresh();
-      };
-      ref.on("value", handler, error);
-      State.chatUnsubscribe = () => ref.off("value", handler);
-      State.chatLoading = true;
-    }
-
-    async function ensureRoomMembership(room, memberUids) {
-      const user = requireFirebaseUser();
-      if (!user) return false;
-      const members = {};
-      memberUids.filter(Boolean).forEach(uid => { members[uid] = true; });
-      members[user.uid] = true;
-      await db.ref(chatPath(room) + "/members").update(members);
-      return true;
     }
     /* IMPORTANT: never overwrite the whole "posts"/"orders" collection with a local
        array — if two people act at the same time, whoever saves last would wipe out
@@ -553,25 +502,54 @@
       clear() { this.query = ""; App.refresh(); }
     };
 
-    if (isFirebaseReady) {
-      db.ref("posts").on("value", (snap) => { State.posts = snap.val() ? Object.values(snap.val()) : []; localStorage.setItem("app_posts", JSON.stringify(State.posts)); App.refresh(); }, (err) => console.warn("posts sync error (check Firebase rules):", err.message));
-      db.ref("orders").on("value", (snap) => { State.orders = snap.val() ? Object.values(snap.val()) : []; localStorage.setItem("app_orders", JSON.stringify(State.orders)); App.refresh(); }, (err) => console.warn("orders sync error:", err.message));
-      db.ref("engagements").on("value", (snap) => {
-        State.engagements = snap.val() || {};
-        Object.keys(State.engagements).forEach(pid => {
-          const e = State.engagements[pid] || {};
-          const p = State.posts.find(x => String(x.id) === String(pid));
-          if (p) {
-            p.likes = Number(e.likesCount ?? p.likes ?? 0);
-            p.shares = Number(e.sharesCount ?? p.shares ?? 0);
-            p.likedBy = e.likes || {};
-            if (e.comments) p.comments = Object.values(e.comments).sort((a,b) => Number(a.createdAt || 0) - Number(b.createdAt || 0));
-          }
-        });
-        localStorage.setItem("app_engagements", JSON.stringify(State.engagements));
+    let activeChatRef = null;
+    let activeChatValueHandler = null;
+    function detachChatListener() {
+      if (activeChatRef && activeChatValueHandler) {
+        activeChatRef.off("value", activeChatValueHandler);
+      }
+      activeChatRef = null;
+      activeChatValueHandler = null;
+      State.chatMessages = [];
+    }
+    async function loadPostEngagement(posts) {
+      if (!isFirebaseReady) return;
+      const uid = State.user && !State.user.isGuest ? State.user.uid : null;
+      await Promise.all(posts.slice(0,80).map(async p => {
+        try {
+          const [likesSnap, sharesSnap, commentsSnap] = await Promise.all([
+            db.ref('engagement/likes/' + p.id).once('value'),
+            db.ref('engagement/shares/' + p.id).once('value'),
+            db.ref('engagement/comments/' + p.id).limitToLast(3).once('value')
+          ]);
+          p.likes = likesSnap.numChildren();
+          p.shares = Number(sharesSnap.val() || 0);
+          p._liked = !!(uid && likesSnap.val() && likesSnap.val()[uid]);
+          p.comments = commentsSnap.val() ? Object.values(commentsSnap.val()).map(c => ({user:c.user,text:c.text,time:c.createdAt})) : [];
+        } catch(e) {}
+      }));
+    }
+
+    function attachChatListener(roomCode) {
+      detachChatListener();
+      if (!isFirebaseReady || !roomCode || !State.user || State.user.isGuest) return;
+      const code = roomCode.replace(/^PRIVATE_/, "");
+      const path = "rooms/" + code + "/messages";
+      activeChatRef = db.ref(path);
+      activeChatValueHandler = snap => {
+        State.chatMessages = snap.val() ? Object.entries(snap.val()).map(([id, m]) => ({ id, ...m })).sort((a,b) => Number(a.createdAt||0)-Number(b.createdAt||0)) : [];
         App.refresh();
-      }, (err) => console.warn("engagement sync error:", err.message));
-      // Chat is NOT read globally anymore. Only the currently opened room is subscribed.
+      };
+      activeChatRef.on("value", activeChatValueHandler, err => {
+        console.warn("Private chat listener error:", err.message);
+        State.chatMessages = [];
+        App.refresh();
+      });
+    }
+
+    if (isFirebaseReady) {
+      db.ref("posts").on("value", async (snap) => { State.posts = snap.val() ? Object.values(snap.val()) : []; localStorage.setItem("app_posts", JSON.stringify(State.posts)); App.refresh(); await loadPostEngagement(State.posts); App.refresh(); }, (err) => console.warn("posts sync error (check Firebase rules):", err.message));
+      db.ref("orders").on("value", (snap) => { State.orders = snap.val() ? Object.values(snap.val()) : []; localStorage.setItem("app_orders", JSON.stringify(State.orders)); App.refresh(); }, (err) => console.warn("orders sync error:", err.message));
       db.ref("settings/advertising").on("value", (snap) => {
         const ad = snap.val();
         if (ad) localStorage.setItem("apnalocal_admin_ad", JSON.stringify(ad));
@@ -1060,7 +1038,7 @@
           wage: document.getElementById('lj-wage').value,
           location: document.getElementById('lj-location').value,
           phone: document.getElementById('lj-phone').value,
-          author: getUser().name, authorUid: getUser().uid, avatar: getUser().avatar,
+          author: getUser().name, avatar: getUser().avatar,
           status: 'APPROVED', isAdminPost: false,
           time: new Date().toLocaleDateString(), likes: 0
         };
@@ -1347,24 +1325,42 @@
       showAccountMenu() {
         if (confirm(`लॉग इन: ${State.user.name}\n\nलॉगआउट करें?`)) this.logout();
       },
-      logout() {
-        stopChatListener();
-        if (isFirebaseReady && auth.currentUser) auth.signOut().catch(() => {});
+      async logout() {
+        detachChatListener();
+        try { if (isFirebaseReady && auth) await auth.signOut(); } catch (e) {}
         State.user = null;
         State.activeRoomCode = null;
         localStorage.removeItem("app_user");
         this.refreshAuthUI();
         App.refresh();
       },
-      loginGoogle() {
-        if (!isFirebaseReady) return alert("Firebase उपलब्ध नहीं है, गेस्ट लॉगिन उपयोग करें।");
-        auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).then((res) => {
-          State.user = { uid: res.user.uid, name: res.user.displayName, phone: res.user.phoneNumber || "", avatar: res.user.photoURL, isGuest: false };
+      async loginGoogle() {
+        if (!isFirebaseReady) return alert("Firebase उपलब्ध नहीं है।");
+        try {
+          const provider = new firebase.auth.GoogleAuthProvider();
+          provider.setCustomParameters({ prompt: "select_account" });
+          const res = await auth.signInWithPopup(provider);
+          State.user = {
+            uid: res.user.uid,
+            name: res.user.displayName || "MyLocal User",
+            phone: res.user.phoneNumber || "",
+            avatar: res.user.photoURL || "https://picsum.photos/100",
+            email: res.user.email || "",
+            isGuest: false
+          };
           localStorage.setItem("app_user", JSON.stringify(State.user));
-          bootstrap.Modal.getInstance(document.getElementById("authModal")).hide();
+          await db.ref("users/" + res.user.uid).update({
+            uid: res.user.uid, name: State.user.name, email: State.user.email,
+            avatar: State.user.avatar, lastSeen: firebase.database.ServerValue.TIMESTAMP
+          });
+          bootstrap.Modal.getInstance(document.getElementById("authModal"))?.hide();
           this.refreshAuthUI();
           App.refresh();
-        }).catch(err => alert("Google login failed: " + (err.message || err)));
+        } catch (err) {
+          console.error("Google login failed", err);
+          const code = err && err.code ? `\nCode: ${err.code}` : "";
+          alert("Google login failed: " + (err.message || err) + code);
+        }
       },
       loginGuest() {
         State.user = { uid: "g_" + Date.now(), name: "Guest_" + Math.floor(Math.random() * 100), phone: "", avatar: "https://picsum.photos/100", isGuest: true };
@@ -1391,20 +1387,6 @@
       currentTab: "feed",
       init() {
         ThemeEngine.init();
-        if (isFirebaseReady) {
-          auth.onAuthStateChanged(user => {
-            if (user) {
-              State.user = { uid: user.uid, name: user.displayName || user.email || "MyLocal User", phone: user.phoneNumber || "", avatar: user.photoURL || "https://picsum.photos/100", isGuest: false };
-              localStorage.setItem("app_user", JSON.stringify(State.user));
-              if (State.activeRoomCode) startChatListener(State.activeRoomCode);
-            } else if (State.user && !State.user.isGuest) {
-              State.user = null; localStorage.removeItem("app_user"); stopChatListener();
-            }
-            this.refreshAuthUI?.();
-            this.refresh();
-          });
-        }
-
         LocationEngine.initAutoGPS();
         document.getElementById("lbl-location").textContent = State.location.label;
         AuthEngine.refreshAuthUI();
@@ -1449,7 +1431,12 @@
         if (this.currentTab === "tools") { const u = document.getElementById('resumeUpload'); if (u) u.addEventListener('change', e => ProTools.loadResume(e)); }
       },
       scrollToBottom() { setTimeout(() => { const cw = document.getElementById('chat-window-scroll'); if (cw) cw.scrollTop = cw.scrollHeight; }, 50); },
-      switchChatRoom(room) { State.activeRoomCode = room; this.refresh(); },
+      switchChatRoom(room) {
+        detachChatListener(); detachProductChatListener();
+        State.activeRoomCode = room; State._productChat = null;
+        if (room && room.startsWith('PRIVATE_')) attachChatListener(room);
+        this.refresh();
+      },
       renderHome() {
         let ad = null; try { ad = JSON.parse(localStorage.getItem("apnalocal_admin_ad") || "null"); } catch (e) {}
         return `
@@ -1510,40 +1497,44 @@
         ${matches.length ? this.renderPosts(matches) : ''}`;
       },
       renderChat() {
+        if (!State.user || State.user.isGuest) {
+          return `<div class="enh-hero rounded-4 p-4 mb-3"><span class="badge bg-white text-primary mb-2">LOGIN REQUIRED</span><h3 class="fw-bold mb-1">🔒 Private Chat</h3><p class="mb-0 opacity-75">Private chat के लिए Google Login जरूरी है। इससे Firebase आपकी chat को सही user के साथ secure रख सकता है।</p></div><div class="card glass-card p-4 text-center"><i class="bi bi-google text-danger" style="font-size:3rem;"></i><h5 class="fw-bold mt-2">पहले Google Login करें</h5><button class="btn btn-danger fw-bold" onclick="AuthEngine.openAuthModal()">Google से Login</button></div>`;
+        }
         const room = State.activeRoomCode;
         if (room && room.startsWith('PRODUCT_')) {
           const p = State._productChat || State.posts.find(x => 'PRODUCT_' + x.id === room);
-          const msgs = State.chatMessages.filter(m => m.room === room);
+          if (!p) return `<div class=\"alert alert-warning\">Product chat उपलब्ध नहीं है।</div>`;
+          const msgs = State.chatMessages;
           return `<div class="card glass-card border-primary">
             <div class="card-header bg-transparent d-flex justify-content-between align-items-center border-bottom pb-2">
               <div class="fw-bold text-primary"><i class="bi bi-chat-dots-fill me-2"></i>Seller Chat</div>
               <button class="btn btn-sm btn-outline-secondary" onclick="App.switchChatRoom(null)">बाहर निकलें</button>
             </div>
-            <div class="small text-secondary px-3 pt-2">Product: <b>${esc(p?.title || 'Product')}</b> · ₹${p?.price || 0}</div>
+            <div class="small text-secondary px-3 pt-2">Product: <b>${esc(p?.title || 'Product')}</b> · ₹${esc(p?.price || 0)}</div>
             <div class="card-body overflow-auto p-3" id="chat-window-scroll" style="height:380px;">
-              ${State.chatLoading && !msgs.length ? '<div class="text-center text-secondary py-5"><div class="spinner-border spinner-border-sm me-2"></div>Chat load हो रही है…</div>' : (msgs.length ? msgs.map(m => { const mine = m.senderUid === getUser().uid; return `<div class="d-flex flex-column mb-2 ${mine ? 'align-items-end' : 'align-items-start'}"><span class="small text-secondary fw-bold">${esc(m.sender)}</span><div class="p-2 ${mine ? 'chat-bubble-me' : 'chat-bubble-other'}">${esc(m.text)}</div></div>`; }).join('') : '<div class="text-center text-secondary py-5">अभी कोई message नहीं। पहला message भेजें।</div>')}
+              ${msgs.length ? msgs.map(m => { const mine = m.senderUid === getUser().uid; return `<div class="d-flex flex-column mb-2 ${mine ? 'align-items-end' : 'align-items-start'}"><span class="small text-secondary fw-bold">${esc(m.sender)}</span><div class="p-2 ${mine ? 'chat-bubble-me' : 'chat-bubble-other'}">${esc(m.text)}</div></div>`; }).join('') : '<div class="text-center text-secondary py-5">अभी कोई message नहीं।</div>'}
             </div>
             <div class="card-footer bg-transparent"><div class="input-group">
-              <input type="text" id="txt-chat" class="form-control" placeholder="Seller को message..." onkeyup="if(event.key==='Enter') App.sendChat()">
+              <input type="text" id="txt-chat" class="form-control" placeholder="Message लिखें..." onkeyup="if(event.key==='Enter') App.sendChat()">
               <button class="btn btn-primary" onclick="App.sendChat()"><i class="bi bi-send-fill"></i></button>
             </div></div>
           </div>`;
         }
         if (room && room.startsWith('PRIVATE_')) {
           const code = room.replace('PRIVATE_', '');
-          const msgs = State.chatMessages.filter(m => m.room === room);
-          const shareText = `मुझसे MyLocal पर Private Chat करें — Chat खोलें और यह code डालें: ${code}`;
+          const msgs = State.chatMessages;
+          const shareText = `मुझसे MyLocal पर Private Chat करें। Room code: ${code}`;
           return `<div class="card glass-card border-success">
             <div class="card-header bg-transparent d-flex justify-content-between align-items-center border-bottom pb-2 flex-wrap gap-2">
               <div class="fw-bold text-success"><i class="bi bi-lock-fill me-2"></i>Private Room <span class="badge bg-success">${esc(code)}</span></div>
               <div class="btn-group btn-group-sm">
-                <button class="btn btn-outline-success" onclick="navigator.share ? navigator.share({title:'MyLocal Private Chat',text:'${shareText.replace(/'/g, "\'")}'}).catch(()=>{}) : window.open('https://wa.me/?text='+encodeURIComponent('${shareText.replace(/'/g, "\'")}'),'_blank')"><i class="bi bi-share"></i> Code शेयर करें</button>
+                <button class="btn btn-outline-success" onclick="window.open('https://wa.me/?text=${encodeURIComponent(shareText)}','_blank')"><i class="bi bi-whatsapp"></i> Code शेयर</button>
                 <button class="btn btn-outline-secondary" onclick="App.switchChatRoom(null)">बाहर निकलें</button>
               </div>
             </div>
-            <div class="small text-secondary px-3 pt-2">यह chat केवल Firebase में इस room के member users को दिखाई जाएगी।</div>
+            <div class="small text-secondary px-3 pt-2">🔐 इस room के messages केवल room members पढ़ सकते हैं।</div>
             <div class="card-body overflow-auto p-3" id="chat-window-scroll" style="height:380px;">
-              ${State.chatLoading && !msgs.length ? '<div class="text-center text-secondary py-5"><div class="spinner-border spinner-border-sm me-2"></div>Chat load हो रही है…</div>' : (msgs.length ? msgs.map(m => { const mine = m.senderUid === getUser().uid; return `<div class="d-flex flex-column mb-2 ${mine ? 'align-items-end' : 'align-items-start'}"><span class="small text-secondary fw-bold" style="font-size:0.65rem;">${esc(m.sender)}</span><div class="p-2 ${mine ? 'chat-bubble-me' : 'chat-bubble-other'}">${esc(m.text)}</div></div>`; }).join('') : '<div class="text-center text-secondary py-5"><i class="bi bi-shield-lock fs-1 d-block mb-2"></i>अभी कोई message नहीं। Code शेयर करके बातचीत शुरू करें।</div>')}
+              ${msgs.length ? msgs.map(m => { const mine = m.senderUid === getUser().uid; return `<div class="d-flex flex-column mb-2 ${mine ? 'align-items-end' : 'align-items-start'}"><span class="small text-secondary fw-bold" style="font-size:.65rem;">${esc(m.sender)}</span><div class="p-2 ${mine ? 'chat-bubble-me' : 'chat-bubble-other'}">${esc(m.text)}</div></div>`; }).join('') : '<div class="text-center text-secondary py-5"><i class="bi bi-shield-lock fs-1 d-block mb-2"></i>अभी कोई message नहीं।</div>'}
             </div>
             <div class="card-footer bg-transparent"><div class="input-group">
               <input type="text" id="txt-chat" class="form-control" placeholder="Private message..." onkeyup="if(event.key==='Enter') App.sendChat()">
@@ -1551,39 +1542,29 @@
             </div></div>
           </div>`;
         }
-        return `
-          <div class="enh-hero rounded-4 p-4 mb-3">
-            <span class="badge bg-white text-primary mb-2">PRIVATE CHAT</span>
-            <h3 class="fw-bold mb-1">🔒 प्राइवेट चैट</h3>
-            <p class="mb-0 opacity-75">हर chat अलग room में है। कोई public chat feed नहीं है। Chat चलाने के लिए Google Login जरूरी है।</p>
-          </div>
+        return `<div class="enh-hero rounded-4 p-4 mb-3"><span class="badge bg-white text-primary mb-2">100% PRIVATE</span><h3 class="fw-bold mb-1">🔒 प्राइवेट चैट</h3><p class="mb-0 opacity-75">हर room का अलग secure Firebase path है। दूसरे users आपकी room chat नहीं पढ़ सकते।</p></div>
           <div class="card glass-card p-4 text-center">
             <i class="bi bi-shield-lock text-success" style="font-size:3rem;"></i>
             <h5 class="fw-bold mt-2">नई Private Chat शुरू करें</h5>
-            <p class="small text-secondary">एक unique code बनेगा। Code सिर्फ जिस व्यक्ति को देंगे, वही room join कर सकेगा।</p>
             <button class="btn btn-success fw-bold py-2 mb-4" onclick="PrivateChat.createNew()"><i class="bi bi-plus-circle-fill me-1"></i> नया Room बनाएं</button>
-            <hr>
-            <h6 class="fw-bold mt-2">मौजूदा Room से जुड़ें</h6>
-            <div class="input-group mt-2" style="max-width:320px;margin:0 auto;">
-              <input type="text" id="join-room-code" class="form-control text-center text-uppercase" placeholder="Code डालें" maxlength="12">
-              <button class="btn btn-primary" onclick="PrivateChat.joinByCode()"><i class="bi bi-box-arrow-in-right"></i></button>
-            </div>
-          </div>
-        `;
+            <hr><h6 class="fw-bold mt-2">मौजूदा Room से जुड़ें</h6>
+            <div class="input-group mt-2" style="max-width:320px;margin:0 auto;"><input type="text" id="join-room-code" class="form-control text-center text-uppercase" placeholder="Code डालें" maxlength="8"><button class="btn btn-primary" onclick="PrivateChat.joinByCode()"><i class="bi bi-box-arrow-in-right"></i></button></div>
+          </div>`;
       },
       sendChat() {
-        const user = requireFirebaseUser();
-        if (!user) return;
-        const room = State.activeRoomCode;
         const input = document.getElementById("txt-chat");
-        const txt = input?.value.trim(); if (!txt || !room) return;
-        const msg = { room, sender: State.user.name, senderUid: user.uid, text: txt, createdAt: firebase.database.ServerValue.TIMESTAMP };
-        db.ref(chatPath(room) + "/messages").push(msg).then(() => {
-          if (input) input.value = "";
-        }).catch(e => {
-          console.warn("Chat send failed:", e.message);
-          alert("Message नहीं भेजा गया: " + (e.message || e));
-        });
+        const txt = input?.value.trim();
+        if (!txt || !State.activeRoomCode || !State.user || State.user.isGuest) return;
+        const message = { sender: getUser().name, senderUid: getUser().uid, text: txt, createdAt: firebase.database.ServerValue.TIMESTAMP };
+        let ref;
+        if (State.activeRoomCode.startsWith('PRODUCT_')) {
+          const productId = State.activeRoomCode.substring(8);
+          ref = db.ref("productRooms/" + productId + "/messages").push();
+        } else {
+          const roomCode = State.activeRoomCode.replace(/^PRIVATE_/, '');
+          ref = db.ref("rooms/" + roomCode + "/messages").push();
+        }
+        ref.set(message).then(() => { input.value = ''; }).catch(err => { console.error(err); alert("Message नहीं भेजा गया: " + err.message); });
       },
       renderPosts(posts) {
         return posts.map(p => {
@@ -1596,7 +1577,7 @@
             <h6 class="fw-bold">${esc(p.title)}</h6><p class="small mb-2">${esc(p.desc)}</p>
             ${p.img ? `<img src="${p.img}" class="img-fluid rounded mb-2 w-100" style="max-height:240px;object-fit:cover;">` : ''}
             <div class="d-flex gap-2 flex-wrap border-top pt-2 mt-1">
-              <button class="btn btn-sm ${(p.likedBy && p.likedBy[getUser().uid]) ? 'btn-danger' : 'btn-outline-danger'} rounded-pill" onclick="ApnaLocalEngage.like('${p.id}')">❤️ ${p.likes || 0}</button>
+              <button class="btn btn-sm ${p._liked ? 'btn-danger' : 'btn-outline-danger'} rounded-pill" onclick="ApnaLocalEngage.like('${p.id}')">❤️ ${p.likes || 0}</button>
               <button class="btn btn-sm btn-outline-primary rounded-pill" onclick="ApnaLocalEngage.share('${p.id}')">↗️ Share ${p.shares || 0}</button>
               <button class="btn btn-sm btn-outline-secondary rounded-pill" onclick="ApnaLocalEngage.comment('${p.id}')">💬 Comment ${(p.comments || []).length}</button>
               ${buyBtn ? `<span class="ms-auto">${buyBtn}</span>` : ''}
@@ -1667,96 +1648,117 @@
 
     /* Product chat routing + engagement, used by App above */
     window.openUserProductChat = async function (id) {
+      if (!State.user || State.user.isGuest) { alert('Seller chat के लिए Google Login करें।'); AuthEngine.openAuthModal(); return; }
       const p = State.posts.find(x => String(x.id) === String(id));
       if (!p) return;
-      const user = requireFirebaseUser();
-      if (!user) return;
-      if (p.isAdminPost) { OrderEngine.openBuyModal(id); return; }
-      if (!p.authorUid) {
-        alert("इस पुराने product में seller का secure UID मौजूद नहीं है। Seller को product दोबारा post करना होगा।");
-        return;
-      }
-      if (p.authorUid === user.uid) {
-        alert("यह आपका अपना product है। अपने ही product पर buyer chat नहीं खोली जा सकती।");
-        return;
-      }
-      State.activeRoomCode = 'PRODUCT_' + id;
-      State._productChat = p;
+      if (p.isAdminPost) return OrderEngine.openBuyModal(id);
+      const sellerUid = p.ownerUid || p.uid || p.authorUid;
+      if (!sellerUid) { alert('इस पुराने product में seller UID नहीं है। Seller से नया listing बनाने को कहें।'); return; }
+      const code = 'PRODUCT_' + id;
       try {
-        await ensureRoomMembership(State.activeRoomCode, [user.uid, p.authorUid]);
-        startChatListener(State.activeRoomCode);
+        await db.ref('productRooms/' + id + '/meta').update({ productId: String(id), sellerUid: sellerUid, updatedAt: firebase.database.ServerValue.TIMESTAMP });
+        await db.ref('productRooms/' + id + '/members/' + getUser().uid).set(true);
+        State.activeRoomCode = code; State._productChat = p;
+        attachProductChatListener(id);
         App.navigate('chat');
-      } catch (e) { alert("Chat room नहीं खुल सका: " + (e.message || e)); }
+      } catch (e) { alert('Seller chat शुरू नहीं हो पाई: ' + e.message); }
     };
 
-    /* Private Chat Room: two people share a short code to chat 1-to-1. */
+    let activeProductChatRef = null;
+    let activeProductChatHandler = null;
+    function detachProductChatListener() {
+      if (activeProductChatRef && activeProductChatHandler) activeProductChatRef.off('value', activeProductChatHandler);
+      activeProductChatRef = null; activeProductChatHandler = null;
+    }
+    function attachProductChatListener(productId) {
+      detachChatListener(); detachProductChatListener();
+      if (!isFirebaseReady || !State.user || State.user.isGuest) return;
+      activeProductChatRef = db.ref('productRooms/' + productId + '/messages');
+      activeProductChatHandler = snap => {
+        State.chatMessages = snap.val() ? Object.entries(snap.val()).map(([id,m]) => ({id,...m})).sort((a,b)=>Number(a.createdAt||0)-Number(b.createdAt||0)) : [];
+        App.refresh();
+      };
+      activeProductChatRef.on('value', activeProductChatHandler, err => console.warn('Product chat listener:', err.message));
+    }
+
     const PrivateChat = {
-      genCode() { return Math.random().toString(36).slice(2, 8).toUpperCase(); },
+      genCode() { return Math.random().toString(36).slice(2, 10).toUpperCase(); },
       async createNew() {
-        const user = requireFirebaseUser();
-        if (!user) return;
-        let code = this.genCode();
-        // Avoid an accidental collision.
-        for (let i = 0; i < 5; i++) {
-          const snap = await db.ref(chatPath('PRIVATE_' + code)).once('value');
-          if (!snap.exists()) break;
+        if (!State.user || State.user.isGuest) { alert('Private Chat के लिए Google Login करें।'); AuthEngine.openAuthModal(); return; }
+        let code, ok = false;
+        for (let i=0;i<8 && !ok;i++) {
           code = this.genCode();
+          const metaRef = db.ref('rooms/' + code + '/meta');
+          const tx = await metaRef.transaction(current => current === null ? { creatorUid:getUser().uid, createdAt:firebase.database.ServerValue.TIMESTAMP } : undefined);
+          ok = tx.committed;
         }
+        if (!ok) { alert('Room बनाने में समस्या हुई, दोबारा कोशिश करें।'); return; }
+        await db.ref('rooms/' + code + '/members/' + getUser().uid).set(true);
         State.activeRoomCode = 'PRIVATE_' + code;
-        State._privateRoomOwner = user.uid;
-        try {
-          await ensureRoomMembership(State.activeRoomCode, [user.uid]);
-          await db.ref(chatPath(State.activeRoomCode)).update({ createdAt: firebase.database.ServerValue.TIMESTAMP, createdBy: user.uid });
-          startChatListener(State.activeRoomCode);
-          App.refresh();
-        } catch (e) { alert("Private room नहीं बन सका: " + (e.message || e)); }
+        attachChatListener(State.activeRoomCode);
+        App.refresh();
       },
       async joinByCode() {
-        const user = requireFirebaseUser();
-        if (!user) return;
+        if (!State.user || State.user.isGuest) { alert('Private Chat के लिए Google Login करें।'); AuthEngine.openAuthModal(); return; }
         const input = document.getElementById('join-room-code');
         const code = input?.value.trim().toUpperCase();
-        if (!code || !/^[A-Z0-9]{4,12}$/.test(code)) { alert('कृपया सही Room code डालें।'); return; }
-        const room = 'PRIVATE_' + code;
+        if (!/^[A-Z0-9]{6,8}$/.test(code)) { alert('सही 6–8 character Room code डालें।'); return; }
         try {
-          const snap = await db.ref(chatPath(room)).once('value');
-          if (!snap.exists()) { alert('यह Private Room मौजूद नहीं है।'); return; }
-          await ensureRoomMembership(room, [user.uid]);
-          State.activeRoomCode = room;
-          startChatListener(room);
+          const metaSnap = await db.ref('rooms/' + code + '/meta').once('value');
+          if (!metaSnap.exists()) { alert('यह Room code मौजूद नहीं है।'); return; }
+          const membersRef = db.ref('rooms/' + code + '/members');
+          const tx = await membersRef.transaction(current => {
+            const m = current || {};
+            if (m[getUser().uid]) return m;
+            if (Object.keys(m).length >= 2) return;
+            m[getUser().uid] = true; return m;
+          });
+          if (!tx.committed) { alert('यह Private Room पहले ही 2 लोगों से भरा है।'); return; }
+          State.activeRoomCode = 'PRIVATE_' + code;
+          attachChatListener(State.activeRoomCode);
           App.refresh();
-        } catch (e) { alert("Room join नहीं हो सका: " + (e.message || e)); }
+        } catch (e) { alert('Room join नहीं हो पाया: ' + e.message); }
       },
-      open() { this.createNew(); }
+      open() { App.navigate('chat'); }
     };
 
     window.ApnaLocalEngage = {
       async like(id) {
-        const user = requireFirebaseUser(); if (!user) return;
-        if (!isFirebaseReady) return;
-        const ref = db.ref(`engagements/${id}/likes/${user.uid}`);
+        if (!State.user || State.user.isGuest) { alert('Like करने के लिए Google Login करें।'); AuthEngine.openAuthModal(); return; }
+        const p = State.posts.find(x => String(x.id) === String(id)); if (!p) return;
+        const ref = db.ref('engagement/likes/' + id + '/' + getUser().uid);
         try {
           const snap = await ref.once('value');
-          if (snap.exists()) await ref.remove(); else await ref.set(true);
-          await db.ref(`engagements/${id}/likesCount`).transaction(v => Math.max(0, Number(v || 0) + (snap.exists() ? -1 : 1)));
-        } catch (e) { alert('Like save नहीं हुआ: ' + (e.message || e)); }
+          if (snap.exists()) await ref.remove(); else await ref.set({uid:getUser().uid, createdAt:firebase.database.ServerValue.TIMESTAMP});
+          const countSnap = await db.ref('engagement/likes/' + id).once('value');
+          p.likes = countSnap.numChildren();
+          p._liked = !!(countSnap.val() && countSnap.val()[getUser().uid]);
+          State.posts = State.posts.map(x => String(x.id)===String(id) ? p : x);
+          savePostsLocal(); App.refresh();
+        } catch(e) { alert('Like update नहीं हुआ: ' + e.message); }
       },
       async share(id) {
         const p = State.posts.find(x => String(x.id) === String(id)); if (!p) return;
-        const text = `${p.title || "MyLocal Post"}\n\n${p.desc || ""}`;
-        if (isFirebaseReady && auth.currentUser && !State.user?.isGuest) {
-          db.ref(`engagements/${id}/sharesCount`).transaction(v => Number(v || 0) + 1).catch(e => console.warn('share count failed', e));
-        }
-        if (navigator.share) navigator.share({ title: p.title || "MyLocal", text }).catch(() => {});
-        else window.open("https://wa.me/?text=" + encodeURIComponent(text), "_blank");
+        try {
+          await db.ref('engagement/shares/' + id).transaction(v => Number(v||0)+1);
+          p.shares = Number(p.shares||0)+1; savePostsLocal();
+        } catch(e) {}
+        const text = `${p.title || 'MyLocal Post'}\n\n${p.desc || ''}`;
+        if (navigator.share) navigator.share({title:p.title||'MyLocal',text}).catch(()=>{});
+        else window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+        App.refresh();
       },
       async comment(id) {
-        const user = requireFirebaseUser(); if (!user) return;
-        const c = prompt("Comment लिखें"); if (!c?.trim() || !isFirebaseReady) return;
-        const comment = { user: user.displayName || State.user.name, uid: user.uid, text: c.trim(), createdAt: firebase.database.ServerValue.TIMESTAMP };
+        if (!State.user || State.user.isGuest) { alert('Comment करने के लिए Google Login करें।'); AuthEngine.openAuthModal(); return; }
+        const p = State.posts.find(x => String(x.id) === String(id)); if (!p) return;
+        const c = prompt('Comment लिखें'); if (!c?.trim()) return;
         try {
-          await db.ref(`engagements/${id}/comments`).push(comment);
-        } catch (e) { alert('Comment save नहीं हुआ: ' + (e.message || e)); }
+          const ref = db.ref('engagement/comments/' + id).push();
+          await ref.set({uid:getUser().uid, user:getUser().name, avatar:getUser().avatar||'', text:c.trim(), createdAt:firebase.database.ServerValue.TIMESTAMP});
+          p.comments = Array.isArray(p.comments) ? p.comments : [];
+          p.comments.push({uid:getUser().uid,user:getUser().name,text:c.trim(),time:new Date().toLocaleString()});
+          savePostsLocal(); App.refresh();
+        } catch(e) { alert('Comment save नहीं हुआ: ' + e.message); }
       }
     };
 
@@ -2020,6 +2022,19 @@
       }
     };
 
+    if (isFirebaseReady && auth) {
+      auth.onAuthStateChanged(async user => {
+        if (user) {
+          State.user = { uid:user.uid, name:user.displayName||'MyLocal User', phone:user.phoneNumber||'', avatar:user.photoURL||'https://picsum.photos/100', email:user.email||'', isGuest:false };
+          localStorage.setItem('app_user', JSON.stringify(State.user));
+          AuthEngine.refreshAuthUI();
+          if (State.activeRoomCode) {
+            if (State.activeRoomCode.startsWith('PRIVATE_')) attachChatListener(State.activeRoomCode);
+            else if (State.activeRoomCode.startsWith('PRODUCT_')) attachProductChatListener(State.activeRoomCode.substring(8));
+          }
+        }
+      });
+    }
     document.addEventListener("DOMContentLoaded", () => AreaGate.check());
   </script>
 </body>
