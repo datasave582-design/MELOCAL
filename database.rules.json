@@ -1,6 +1,126 @@
 {
   "rules": {
-    ".read": true,
-    ".write": true
+    ".read": "auth != null",
+    ".write": false,
+
+    "admins": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && root.child('admins').child(auth.uid).val() === true"
+      }
+    },
+
+    "users": {
+      "$uid": {
+        ".read": "auth != null && (auth.uid === $uid || root.child('admins').child(auth.uid).val() === true)",
+        ".write": "auth != null && (auth.uid === $uid || root.child('admins').child(auth.uid).val() === true)",
+        "isPro": {
+          ".write": "auth != null && root.child('admins').child(auth.uid).val() === true"
+        },
+        "proSource": {
+          ".write": "auth != null && root.child('admins').child(auth.uid).val() === true"
+        },
+        "localAuthorization": {
+          ".write": "auth != null && auth.uid === $uid && (!data.exists() || root.child('admins').child(auth.uid).val() === true)",
+          ".validate": "newData.hasChildren(['authorized']) && newData.child('authorized').val() === true"
+        },
+        "usage": {
+          "$date": {
+            ".read": "auth != null && (auth.uid === $uid || root.child('admins').child(auth.uid).val() === true)",
+            ".write": "auth != null && auth.uid === $uid",
+            ".validate": "(!newData.child('imageUses').exists() || ((newData.child('imageUses').val() || 0) >= (data.child('imageUses').val() || 0) && (newData.child('imageUses').val() || 0) <= 2) || root.child('users').child(auth.uid).child('isPro').val() === true) && (!newData.child('pdfUses').exists() || ((newData.child('pdfUses').val() || 0) >= (data.child('pdfUses').val() || 0) && (newData.child('pdfUses').val() || 0) <= 2) || root.child('users').child(auth.uid).child('isPro').val() === true) && (!newData.child('resumeUses').exists() || ((newData.child('resumeUses').val() || 0) >= (data.child('resumeUses').val() || 0) && (newData.child('resumeUses').val() || 0) <= 1) || root.child('users').child(auth.uid).child('isPro').val() === true)"
+          }
+        }
+      }
+    },
+
+    "settings": {
+      "localArea": {
+        ".read": "auth != null",
+        ".write": "auth != null && root.child('admins').child(auth.uid).val() === true",
+        ".validate": "newData.hasChildren(['lat','lng','label','radiusKm']) && newData.child('lat').isNumber() && newData.child('lng').isNumber() && newData.child('radiusKm').isNumber() && newData.child('radiusKm').val() > 0"
+      },
+      "serviceAreas": {
+        ".read": "auth != null",
+        "$id": {
+          ".write": "auth != null && root.child('admins').child(auth.uid).val() === true"
+        }
+      },
+      "serviceArea": {
+        ".read": "auth != null",
+        ".write": "auth != null && root.child('admins').child(auth.uid).val() === true"
+      },
+      "pro": {
+        ".read": "auth != null",
+        ".write": "auth != null && root.child('admins').child(auth.uid).val() === true"
+      },
+      "advertising": {
+        ".read": "auth != null",
+        ".write": "auth != null && root.child('admins').child(auth.uid).val() === true"
+      }
+    },
+
+    "posts": {
+      "$postId": {
+        ".read": "auth != null",
+        ".write": "auth != null && (root.child('admins').child(auth.uid).val() === true || (data.exists() && data.child('ownerUid').val() === auth.uid && newData.child('ownerUid').val() === auth.uid && newData.child('isAdminPost').val() !== true) || (!data.exists() && newData.child('ownerUid').val() === auth.uid && newData.child('isAdminPost').val() !== true))",
+        ".validate": "newData.hasChildren(['id','status','isAdminPost']) && newData.child('id').val() === $postId && newData.child('isAdminPost').val() !== true || root.child('admins').child(auth.uid).val() === true"
+      }
+    },
+
+    "orders": {
+      "$orderId": {
+        ".read": "auth != null && (root.child('admins').child(auth.uid).val() === true || data.child('buyerUid').val() === auth.uid)",
+        ".write": "auth != null && (root.child('admins').child(auth.uid).val() === true || (!data.exists() && newData.child('buyerUid').val() === auth.uid && newData.child('productId').isString()) || (data.exists() && data.child('buyerUid').val() === auth.uid && newData.child('buyerUid').val() === auth.uid))",
+        ".validate": "newData.hasChildren(['orderId','productId','buyerUid']) && newData.child('orderId').val() === $orderId"
+      }
+    },
+
+    "rooms": {
+      "$roomId": {
+        "meta": {
+          ".read": "auth != null && data.child('participants').child(auth.uid).val() === true",
+          ".write": "auth != null && newData.child('participants').child(auth.uid).val() === true && (data.exists() ? data.child('participants').child(auth.uid).val() === true : true)"
+        },
+        "messages": {
+          "$messageId": {
+            ".read": "auth != null && root.child('rooms').child($roomId).child('meta').child('participants').child(auth.uid).val() === true",
+            ".write": "auth != null && root.child('rooms').child($roomId).child('meta').child('participants').child(auth.uid).val() === true && (!data.exists() && newData.child('senderUid').val() === auth.uid || data.exists() && newData.child('senderUid').val() === data.child('senderUid').val())",
+            ".validate": "newData.hasChildren(['senderUid','text','createdAt']) && newData.child('senderUid').val() === auth.uid"
+          }
+        }
+      }
+    },
+
+    "businesses": {
+      ".read": "auth != null",
+      "$id": {
+        ".write": "auth != null && root.child('admins').child(auth.uid).val() === true",
+        ".validate": "newData.hasChildren(['id','name','status'])"
+      }
+    },
+
+    "services": {
+      ".read": "auth != null",
+      "$id": {
+        ".write": "auth != null && root.child('admins').child(auth.uid).val() === true",
+        ".validate": "newData.hasChildren(['id','name','status'])"
+      }
+    },
+
+    "notices": {
+      ".read": "auth != null",
+      "$id": {
+        ".write": "auth != null && root.child('admins').child(auth.uid).val() === true",
+        ".validate": "newData.hasChildren(['id','name','status']) || newData.hasChildren(['id','title','status'])"
+      }
+    },
+
+    "adminTickets": {
+      "$id": {
+        ".read": "auth != null && (root.child('admins').child(auth.uid).val() === true || data.child('uid').val() === auth.uid)",
+        ".write": "auth != null && (root.child('admins').child(auth.uid).val() === true || (!data.exists() && newData.child('uid').val() === auth.uid))"
+      }
+    }
   }
 }
