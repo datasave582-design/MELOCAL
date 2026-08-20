@@ -597,11 +597,6 @@
     const esc = s => String(s ?? "").replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
 
     /* ========================================================================
-       SELF-CONTAINED PWA SETUP — no separate icon/manifest files needed.
-       Builds the app icon + web manifest in-memory and attaches them so
-       "Add to Home Screen" / install prompts work from this single HTML file.
-       ======================================================================== */
-/* ========================================================================
        1. FIREBASE & STATE ENGINE
        ======================================================================== */
     const firebaseConfig = {
